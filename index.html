@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mcstructure 解凍</title>
+<title>mcstructure Decompressor</title>
 <style>
   html, body { margin: 0; background: #000; color: #ddd; font-family: sans-serif; }
   main { max-width: 640px; margin: 0 auto; padding: 48px 16px; display: flex; flex-direction: column; gap: 24px; }
@@ -19,8 +19,8 @@
 </head>
 <body>
 <main>
-  <h1>mcstructure 解凍</h1>
-  <label id="drop">.mcstructure を選択またはドロップ<input id="file" type="file" accept=".mcstructure" multiple></label>
+  <h1>mcstructure Decompressor</h1>
+  <label id="drop">Select or drop .mcstructure files<input id="file" type="file" accept=".mcstructure" multiple></label>
   <ul id="list"></ul>
 </main>
 <script>
@@ -50,7 +50,7 @@ function skip(dv, p, t) {
     case 11: return p + 4 + 4 * dv.getInt32(p, true);
     case 12: return p + 4 + 8 * dv.getInt32(p, true);
   }
-  throw new Error('不明なタグ ' + t);
+  throw new Error('Unknown tag ' + t);
 }
 
 async function inflate(bytes) {
@@ -60,7 +60,7 @@ async function inflate(bytes) {
 
 async function convert(buf) {
   const b = new Uint8Array(buf), dv = new DataView(buf);
-  if (b[0] !== 10) throw new Error('NBT ではありません');
+  if (b[0] !== 10) throw new Error('Not an NBT file');
   let p = 3 + dv.getUint16(1, true);
   const entries = [];
   let compression = 0, found = false;
@@ -84,15 +84,15 @@ async function convert(buf) {
     }
     entries.push({ raw: b.subarray(start, p) });
   }
-  if (!found) throw new Error('圧縮されていません');
-  if (compression !== 1) throw new Error('未対応の compression: ' + compression);
+  if (!found) throw new Error('Not compressed');
+  if (compression !== 1) throw new Error('Unsupported compression: ' + compression);
 
   const parts = [b.subarray(0, 3 + dv.getUint16(1, true))];
   for (const e of entries) {
     if (e.raw) { parts.push(e.raw); continue; }
     const inner = await inflate(e.data);
     const idv = new DataView(inner.buffer);
-    if (inner[0] !== 10) throw new Error('structure の中身が不正です');
+    if (inner[0] !== 10) throw new Error('Invalid structure data');
     const body = inner.subarray(3 + idv.getUint16(1, true));
     const nm = enc.encode(e.name);
     const head = new Uint8Array(3 + nm.length);
@@ -115,7 +115,7 @@ async function handle(files) {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = f.name.replace(/\.mcstructure$/i, '') + '_uncompressed.mcstructure';
-      a.textContent = 'ダウンロード';
+      a.textContent = 'Download';
       li.append(a);
       a.click();
     } catch (err) {
