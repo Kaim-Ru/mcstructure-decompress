@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mcstructure 解凍</title>
+<style>
+  html, body { margin: 0; background: #000; color: #ddd; font-family: sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 16px; display: flex; flex-direction: column; gap: 24px; }
+  h1 { margin: 0; font-size: 24px; color: #fff; }
+  label { display: flex; align-items: center; justify-content: center; min-height: 160px; border: 1px solid #333; background: #111; cursor: pointer; }
+  label.over { border-color: #888; }
+  input { display: none; }
+  ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  li { display: flex; justify-content: space-between; gap: 16px; padding: 12px; background: #111; border: 1px solid #222; overflow-wrap: anywhere; }
+  a { color: #fff; }
+  .err { color: #e55; }
+</style>
+</head>
+<body>
+<main>
+  <h1>mcstructure 解凍</h1>
+  <label id="drop">.mcstructure を選択またはドロップ<input id="file" type="file" accept=".mcstructure" multiple></label>
+  <ul id="list"></ul>
+</main>
+<script>
+const enc = new TextEncoder();
+
+function skip(dv, p, t) {
+  switch (t) {
+    case 1: return p + 1;
+    case 2: return p + 2;
+    case 3: case 5: return p + 4;
+    case 4: case 6: return p + 8;
+    case 7: return p + 4 + dv.getInt32(p, true);
+    case 8: return p + 2 + dv.getUint16(p, true);
+    case 9: {
+      const et = dv.getInt8(p), n = dv.getInt32(p + 1, true);
+      p += 5;
+      for (let i = 0; i < n; i++) p = skip(dv, p, et);
+      return p;
+    }
+    case 10:
+      for (;;) {
+        const ct = dv.getInt8(p++);
+        if (ct === 0) return p;
+        p += 2 + dv.getUint16(p, true);
+        p = skip(dv, p, ct);
+      }
+    case 11: return p + 4 + 4 * dv.getInt32(p, true);
+    case 12: return p + 4 + 8 * dv.getInt32(p, true);
+  }
+  throw new Error('不明なタグ ' + t);
+}
+
+async function inflate(bytes) {
+  const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+
+async function convert(buf) {
+  const b = new Uint8Array(buf), dv = new DataView(buf);
+  if (b[0] !== 10) throw new Error('NBT ではありません');
+  let p = 3 + dv.getUint16(1, true);
+  const entries = [];
+  let compression = 0, found = false;
+  for (;;) {
+    const start = p, t = dv.getInt8(p++);
+    if (t === 0) break;
+    const nl = dv.getUint16(p, true);
+    const name = new TextDecoder().decode(b.subarray(p + 2, p + 2 + nl));
+    p += 2 + nl;
+    const vs = p;
+    p = skip(dv, p, t);
+    if (name === 'compression') {
+      compression = t === 1 ? dv.getInt8(vs) : t === 2 ? dv.getInt16(vs, true) : t === 3 ? dv.getInt32(vs, true) : -1;
+      continue;
+    }
+    if (name === 'structure' && t === 7) {
+      found = true;
+      const len = dv.getInt32(vs, true);
+      entries.push({ name, data: b.subarray(vs + 4, vs + 4 + len) });
+      continue;
+    }
+    entries.push({ raw: b.subarray(start, p) });
+  }
+  if (!found) throw new Error('圧縮されていません');
+  if (compression !== 1) throw new Error('未対応の compression: ' + compression);
+
+  const parts = [b.subarray(0, 3 + dv.getUint16(1, true))];
+  for (const e of entries) {
+    if (e.raw) { parts.push(e.raw); continue; }
+    const inner = await inflate(e.data);
+    const idv = new DataView(inner.buffer);
+    if (inner[0] !== 10) throw new Error('structure の中身が不正です');
+    const body = inner.subarray(3 + idv.getUint16(1, true));
+    const nm = enc.encode(e.name);
+    const head = new Uint8Array(3 + nm.length);
+    head[0] = 10; head[1] = nm.length & 255; head[2] = nm.length >> 8; head.set(nm, 3);
+    parts.push(head, body);
+  }
+  parts.push(new Uint8Array([0]));
+  return new Blob(parts, { type: 'application/octet-stream' });
+}
+
+const list = document.getElementById('list');
+
+async function handle(files) {
+  for (const f of files) {
+    const li = document.createElement('li');
+    li.textContent = f.name;
+    list.prepend(li);
+    try {
+      const blob = await convert(await f.arrayBuffer());
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = f.name.replace(/\.mcstructure$/i, '') + '_uncompressed.mcstructure';
+      a.textContent = 'ダウンロード';
+      li.append(a);
+      a.click();
+    } catch (err) {
+      const s = document.createElement('span');
+      s.className = 'err';
+      s.textContent = err.message;
+      li.append(s);
+    }
+  }
+}
+
+const drop = document.getElementById('drop');
+document.getElementById('file').addEventListener('change', e => { handle([...e.target.files]); e.target.value = ''; });
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); handle([...e.dataTransfer.files]); });
+</script>
+</body>
+</html>
